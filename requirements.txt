@@ -1,5 +1,5 @@
 numpy==1.23.3
-llvmlite
+llvmlite==0.31.0
 numba==0.48.0
 torch>=1.1
 tensorboardX
