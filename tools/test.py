@@ -41,7 +41,11 @@ def parse_config():
     parser.add_argument('--save_to_file', action='store_true', default=False, help='')
     parser.add_argument('--infer_time', action='store_true', default=False, help='calculate inference latency')
     parser.add_argument('--eval_map',  action='store_true', default=False, help='evaluate bev map segmentation')
-
+    parser.add_argument('--save_map_outputs', action='store_true', default=False,
+                        help='save map segmentation logits, binary masks and colorized masks')
+    parser.add_argument('--map_score_thresh', type=float, default=0.5,
+                        help='threshold to binarize per-class map probabilities')
+                        
     args = parser.parse_args()
 
     cfg_from_yaml_file(args.cfg_file, cfg)
