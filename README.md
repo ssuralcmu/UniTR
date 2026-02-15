@@ -238,6 +238,24 @@ bash scripts/dist_test.sh 8 --cfg_file ./cfgs/nuscenes_models/unitr_map+lss.yaml
 # NOTE: evaluation results will not be logged in *.log, only be printed in the teminal
 ```
 
+```shell
+# single-gpu export of all val map masks + BEVFusion-style color visualizations
+cd tools
+python test.py \
+  --cfg_file ./cfgs/nuscenes_models/unitr_map+lss.yaml \
+  --ckpt <CHECKPOINT_FILE> \
+  --eval_map \
+  --save_map_outputs \
+  --map_score_thresh 0.5
+```
+
+The outputs are saved to:
+`output/<EXP_GROUP>/<TAG>/default/eval/epoch_no_number/val/default/map_outputs/`
+
+- `probs/<sample_token>.npy`: model probabilities `(6, H, W)`.
+- `masks/<sample_token>.npy`: boolean masks thresholded by `--map_score_thresh`.
+- `vis_bevfusion/<sample_token>.png`: colorized masks in BEVFusion nuScenes map-class order (`drivable_area`, `ped_crossing`, `walkway`, `stop_line`, `carpark_area`, `divider`).
+
 ### Cache Testing 
 - 🔥If the camera and Lidar parameters of the dataset you are using remain constant, then using our cache mode will not affect performance. You can even cache all mapping calculations during the training phase, which can significantly accelerate your training speed.
 - Each sample in Nuscenes will `have some variations in camera parameters`, and during normal inference, we disable the cache mode to ensure result accuracy. However, due to the robustness of our mapping, even in scenarios with camera parameter variations like Nuscenes, the performance will only drop slightly (around 0.4 NDS).
