@@ -19,6 +19,11 @@ DATA_CONFIG:
       USE_MAP: True
       CLASS_NAMES: ['drivable_area', 'ped_crossing', 'walkway', 'stop_line', 'carpark_area', 'divider']
 
+    CONTEXT_CONFIG:
+      USE_NIGHT_RAIN_CONTEXT: True
+      SCENE_JSON: scene.json
+      SAMPLE_JSON: sample.json
+
     DATA_AUGMENTOR:
         DISABLE_AUG_LIST: ['placeholder']
         AUG_CONFIG_LIST:
@@ -163,6 +168,9 @@ MODEL:
       NAME: ConvFuser
       IN_CHANNEL: 208
       OUT_CHANNEL: 128
+      ENABLE_CONTEXT_GATE: True
+      CONTEXT_DIM: 2
+      CONTEXT_HIDDEN_DIM: 16
 
     VFE:
       NAME: DynPillarVFE
@@ -213,7 +221,7 @@ MODEL:
 
 
 OPTIMIZATION:
-    BATCH_SIZE_PER_GPU: 3
+    BATCH_SIZE_PER_GPU: 1
     NUM_EPOCHS: 20
 
     OPTIMIZER: adam_onecycle

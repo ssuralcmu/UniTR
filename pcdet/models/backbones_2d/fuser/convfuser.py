@@ -13,7 +13,19 @@ class ConvFuser(nn.Module):
             nn.BatchNorm2d(out_channel),
             nn.ReLU(True)
             )
-        
+
+        self.enable_context_gate = self.model_cfg.get('ENABLE_CONTEXT_GATE', False)
+        if self.enable_context_gate:
+            hidden_dim = self.model_cfg.get('CONTEXT_HIDDEN_DIM', 16)
+            context_dim = self.model_cfg.get('CONTEXT_DIM', 2)
+            self.context_gate = nn.Sequential(
+                nn.Linear(context_dim, hidden_dim),
+                nn.ReLU(inplace=True),
+                nn.Linear(hidden_dim, 2)
+            )
+            nn.init.zeros_(self.context_gate[-1].weight)
+            nn.init.zeros_(self.context_gate[-1].bias)
+
     def forward(self,batch_dict):
         """
         Args:
@@ -27,6 +39,18 @@ class ConvFuser(nn.Module):
         """
         img_bev = batch_dict['spatial_features_img']
         lidar_bev = batch_dict['spatial_features']
+
+        if self.enable_context_gate and ('context_nr' in batch_dict):
+            context_nr = batch_dict['context_nr'].to(img_bev.device).float()
+            gate_logits = self.context_gate(context_nr)
+            gate = 2.0 * torch.sigmoid(gate_logits)
+            img_weight = gate[:, 0].view(-1, 1, 1, 1)
+            lidar_weight = gate[:, 1].view(-1, 1, 1, 1)
+            img_bev = img_bev * img_weight
+            lidar_bev = lidar_bev * lidar_weight
+            batch_dict['context_fusion_weight_img'] = img_weight.squeeze(-1).squeeze(-1)
+            batch_dict['context_fusion_weight_lidar'] = lidar_weight.squeeze(-1).squeeze(-1)
+
         cat_bev = torch.cat([img_bev,lidar_bev],dim=1)
         mm_bev = self.conv(cat_bev)
         batch_dict['spatial_features'] = mm_bev

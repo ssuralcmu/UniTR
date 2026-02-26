@@ -9,11 +9,14 @@ from .learning_schedules_fastai import CosineWarmupLR, OneCycle, CosineAnnealing
 
 
 def build_optimizer(model, optim_cfg):
+    trainable_params = [p for p in model.parameters() if p.requires_grad]
+    if len(trainable_params) == 0:
+        raise RuntimeError('No trainable parameters found. Please check freeze settings.')
     if optim_cfg.OPTIMIZER == 'adam':
-        optimizer = optim.Adam(model.parameters(), lr=optim_cfg.LR, weight_decay=optim_cfg.WEIGHT_DECAY)
+        optimizer = optim.Adam(trainable_params, lr=optim_cfg.LR, weight_decay=optim_cfg.WEIGHT_DECAY)
     elif optim_cfg.OPTIMIZER == 'sgd':
         optimizer = optim.SGD(
-            model.parameters(), lr=optim_cfg.LR, weight_decay=optim_cfg.WEIGHT_DECAY,
+            trainable_params, lr=optim_cfg.LR, weight_decay=optim_cfg.WEIGHT_DECAY,
             momentum=optim_cfg.MOMENTUM
         )
     elif optim_cfg.OPTIMIZER in ['adam_onecycle','adam_cosineanneal']:

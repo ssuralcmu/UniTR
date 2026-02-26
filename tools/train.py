@@ -50,7 +50,10 @@ def parse_config():
     parser.add_argument('--wo_gpu_stat', action='store_true', help='')
     parser.add_argument('--use_amp', action='store_true', help='use mix precision training')
     parser.add_argument('--eval_map', action='store_true', default=False, help='evaluate bev map segmentation')
-
+    parser.add_argument('--finetune_context_only', action='store_true', default=False,
+                        help='freeze all parameters except context fusion parameters')
+    parser.add_argument('--context_trainable_keyword', type=str, default='context_gate',
+                        help='parameter name keyword to keep trainable in --finetune_context_only mode')
     
 
     args = parser.parse_args()
@@ -65,6 +68,19 @@ def parse_config():
         cfg_from_list(args.set_cfgs, cfg)
 
     return args, cfg
+
+def freeze_all_except_keyword(model, keyword, logger):
+    total_params = 0
+    trainable_params = 0
+    for name, param in model.named_parameters():
+        total_params += param.numel()
+        keep_trainable = keyword in name
+        param.requires_grad = keep_trainable
+        if keep_trainable:
+            trainable_params += param.numel()
+            logger.info(f'context finetune trainable: {name}')
+    logger.info(f'Context finetune enabled. trainable params: {trainable_params}/{total_params}')
+
 
 
 def main():
@@ -133,14 +149,17 @@ def main():
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
     model.cuda()
 
-    optimizer = build_optimizer(model, cfg.OPTIMIZATION)
-
     # load checkpoint if it is possible
     start_epoch = it = 0
     last_epoch = -1
     if args.pretrained_model is not None:
         model.load_params_from_file(filename=args.pretrained_model, to_cpu=dist_train, logger=logger)
 
+    if args.finetune_context_only:
+        freeze_all_except_keyword(model, args.context_trainable_keyword, logger)
+
+    optimizer = build_optimizer(model, cfg.OPTIMIZATION)
+    
     if args.ckpt is not None:
         it, start_epoch = model.load_params_with_optimizer(args.ckpt, to_cpu=dist_train, optimizer=optimizer, logger=logger)
         last_epoch = start_epoch + 1

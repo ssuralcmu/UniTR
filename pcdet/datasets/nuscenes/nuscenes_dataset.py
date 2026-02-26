@@ -1,7 +1,7 @@
 import copy
 import pickle
 from pathlib import Path
-
+import json
 import numpy as np
 from tqdm import tqdm
 
@@ -35,9 +35,59 @@ class NuScenesDataset(DatasetTemplate):
             self.use_map = False
 
         self.include_nuscenes_data(self.mode)
+        self.context_cfg = self.dataset_cfg.get('CONTEXT_CONFIG', None)
+        self.sample_context_map = None
+        if self.context_cfg is not None and self.context_cfg.get('USE_NIGHT_RAIN_CONTEXT', False):
+            self.sample_context_map = self._build_sample_context_map()
         if self.training and self.dataset_cfg.get('BALANCED_RESAMPLING', False):
             self.infos = self.balanced_infos_resampling(self.infos)
 
+
+    @staticmethod
+    def _to_binary_context(value):
+        if isinstance(value, bool):
+            return float(value)
+        if isinstance(value, (int, float)):
+            return 1.0 if float(value) > 0 else 0.0
+        if isinstance(value, str):
+            value = value.strip().lower()
+            if value in ['1', 'true', 'yes', 'y']:
+                return 1.0
+        return 0.0
+
+    def _build_sample_context_map(self):
+        context_cfg = self.context_cfg
+        sample_json_file = self.root_path / context_cfg.get('SAMPLE_JSON', 'sample.json')
+        scene_json_file = self.root_path / context_cfg.get('SCENE_JSON', 'scene.json')
+
+        if not sample_json_file.exists() or not scene_json_file.exists():
+            self.logger.warning(
+                'NuScenes context files do not exist, disable night/rain context. sample=%s, scene=%s',
+                sample_json_file, scene_json_file
+            )
+            return None
+
+        with open(scene_json_file, 'r') as f:
+            scenes = json.load(f)
+        with open(sample_json_file, 'r') as f:
+            samples = json.load(f)
+
+        scene_context = {}
+        for scene in scenes:
+            scene_context[scene['token']] = np.array([
+                self._to_binary_context(scene.get('N', 0)),
+                self._to_binary_context(scene.get('R', 0))
+            ], dtype=np.float32)
+
+        sample_context = {}
+        for sample in samples:
+            context = scene_context.get(sample['scene_token'], None)
+            if context is not None:
+                sample_context[sample['token']] = context
+
+        self.logger.info('Loaded night/rain context for %d samples', len(sample_context))
+        return sample_context
+    
     def include_nuscenes_data(self, mode):
         self.logger.info('Loading NuScenes dataset')
         nuscenes_infos = []
@@ -237,6 +287,11 @@ class NuScenesDataset(DatasetTemplate):
             'frame_id': Path(info['lidar_path']).stem,
             'metadata': {'token': info['token']}
         }
+        if self.sample_context_map is not None:
+            input_dict['context_nr'] = self.sample_context_map.get(
+                info['token'],
+                np.zeros((2,), dtype=np.float32)
+            )
         if self.use_map:
             input_dict['ref_from_car'] = info['ref_from_car']
             input_dict['car_from_global'] = info['car_from_global']
