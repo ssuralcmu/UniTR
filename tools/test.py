@@ -6,6 +6,7 @@ import os
 import re
 import time
 from pathlib import Path
+import copy
 
 import numpy as np
 import torch
@@ -45,7 +46,10 @@ def parse_config():
                         help='save map segmentation logits, binary masks and colorized masks')
     parser.add_argument('--map_score_thresh', type=float, default=0.5,
                         help='threshold to binarize per-class map probabilities')
-                        
+
+    parser.add_argument('--eval_context_subsets', type=str, default='all',
+                        help='comma-separated context subsets for NuScenes eval: night_rain,all,night,rain,clear')
+
     args = parser.parse_args()
 
     cfg_from_yaml_file(args.cfg_file, cfg)
@@ -151,6 +155,51 @@ def repeat_eval_ckpt(model, test_loader, args, eval_output_dir, logger, ckpt_dir
             print('%s' % cur_epoch_id, file=f)
         logger.info('Epoch %s has been evaluated' % cur_epoch_id)
 
+def parse_eval_context_subsets(eval_context_subsets):
+    if eval_context_subsets is None:
+        return None
+
+    alias = {
+        'all': 'all',
+        'night': 'night',
+        'rain': 'rain',
+        'night_rain': 'night_rain',
+        'rain_night': 'night_rain',
+        'rain+night': 'night_rain',
+        'night+rain': 'night_rain',
+        'clear': 'clear',
+        'no_rain_no_night': 'clear',
+        'no_night_no_rain': 'clear'
+    }
+
+    subsets = []
+    for raw_name in eval_context_subsets.split(','):
+        name = raw_name.strip().lower().replace('-', '_').replace(' ', '_')
+        if not name:
+            continue
+        name = alias.get(name, name)
+        if name not in ['all', 'night', 'rain', 'night_rain', 'clear']:
+            raise ValueError(f'Unsupported context subset: {raw_name}')
+        if name not in subsets:
+            subsets.append(name)
+
+    return subsets or None
+
+
+def build_eval_output_dir(output_dir, args):
+    eval_output_dir = output_dir / 'eval'
+
+    if not args.eval_all:
+        num_list = re.findall(r'\d+', args.ckpt) if args.ckpt is not None else []
+        epoch_id = num_list[-1] if num_list.__len__() > 0 else 'no_number'
+        eval_output_dir = eval_output_dir / ('epoch_%s' % epoch_id) / cfg.DATA_CONFIG.DATA_SPLIT['test']
+    else:
+        eval_output_dir = eval_output_dir / 'eval_all_default'
+
+    if args.eval_tag is not None:
+        eval_output_dir = eval_output_dir / args.eval_tag
+
+    return eval_output_dir
 
 def main():
     args, cfg = parse_config()
@@ -176,17 +225,7 @@ def main():
     output_dir = cfg.ROOT_DIR / 'output' / cfg.EXP_GROUP_PATH / cfg.TAG / args.extra_tag
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    eval_output_dir = output_dir / 'eval'
-
-    if not args.eval_all:
-        num_list = re.findall(r'\d+', args.ckpt) if args.ckpt is not None else []
-        epoch_id = num_list[-1] if num_list.__len__() > 0 else 'no_number'
-        eval_output_dir = eval_output_dir / ('epoch_%s' % epoch_id) / cfg.DATA_CONFIG.DATA_SPLIT['test']
-    else:
-        eval_output_dir = eval_output_dir / 'eval_all_default'
-
-    if args.eval_tag is not None:
-        eval_output_dir = eval_output_dir / args.eval_tag
+    eval_output_dir = build_eval_output_dir(output_dir, args)
 
     eval_output_dir.mkdir(parents=True, exist_ok=True)
     log_file = eval_output_dir / ('log_eval_%s.txt' % datetime.datetime.now().strftime('%Y%m%d-%H%M%S'))
@@ -201,23 +240,40 @@ def main():
         logger.info('total_batch_size: %d' % (total_gpus * args.batch_size))
     for key, val in vars(args).items():
         logger.info('{:16} {}'.format(key, val))
-    log_config_to_file(cfg, logger=logger)
+    context_subsets = parse_eval_context_subsets(args.eval_context_subsets)
+    if context_subsets is None:
+        context_subsets = [None]
 
     ckpt_dir = args.ckpt_dir if args.ckpt_dir is not None else output_dir / 'ckpt'
 
-    test_set, test_loader, sampler = build_dataloader(
-        dataset_cfg=cfg.DATA_CONFIG,
-        class_names=cfg.CLASS_NAMES,
-        batch_size=args.batch_size,
-        dist=dist_test, workers=args.workers, logger=logger, training=False
-    )
+    for context_subset in context_subsets:
+        cur_eval_output_dir = eval_output_dir
+        if context_subset is not None:
+            if not hasattr(cfg.DATA_CONFIG, 'CONTEXT_CONFIG') or cfg.DATA_CONFIG.CONTEXT_CONFIG is None:
+                raise ValueError('eval_context_subsets requires DATA_CONFIG.CONTEXT_CONFIG in cfg')
+            cfg.DATA_CONFIG.CONTEXT_CONFIG.EVAL_SUBSET = context_subset
+            cur_eval_output_dir = eval_output_dir / f'context_subset_{context_subset}'
 
-    model = build_network(model_cfg=cfg.MODEL, num_class=len(cfg.CLASS_NAMES), dataset=test_set)
-    with torch.no_grad():
-        if args.eval_all:
-            repeat_eval_ckpt(model, test_loader, args, eval_output_dir, logger, ckpt_dir, dist_test=dist_test)
-        else:
-            eval_single_ckpt(model, test_loader, args, eval_output_dir, logger, epoch_id, dist_test=dist_test)
+        cur_eval_output_dir.mkdir(parents=True, exist_ok=True)
+        logger.info('Start evaluation with context subset: %s', context_subset if context_subset is not None else 'default')
+        log_config_to_file(cfg, logger=logger)
+
+        test_set, test_loader, sampler = build_dataloader(
+            dataset_cfg=cfg.DATA_CONFIG,
+            class_names=cfg.CLASS_NAMES,
+            batch_size=args.batch_size,
+            dist=dist_test, workers=args.workers, logger=logger, training=False
+        )
+
+        model_cfg = copy.deepcopy(cfg.MODEL)
+        model = build_network(model_cfg=model_cfg, num_class=len(cfg.CLASS_NAMES), dataset=test_set)
+        with torch.no_grad():
+            if args.eval_all:
+                repeat_eval_ckpt(model, test_loader, args, cur_eval_output_dir, logger, ckpt_dir, dist_test=dist_test)
+            else:
+                num_list = re.findall(r'\d+', args.ckpt) if args.ckpt is not None else []
+                epoch_id = num_list[-1] if num_list.__len__() > 0 else 'no_number'
+                eval_single_ckpt(model, test_loader, args, cur_eval_output_dir, logger, epoch_id, dist_test=dist_test)
 
 
 if __name__ == '__main__':

@@ -39,6 +39,8 @@ class NuScenesDataset(DatasetTemplate):
         self.sample_context_map = None
         if self.context_cfg is not None and self.context_cfg.get('USE_NIGHT_RAIN_CONTEXT', False):
             self.sample_context_map = self._build_sample_context_map()
+            if not self.training:
+                self._filter_infos_by_context_subset()
         if self.training and self.dataset_cfg.get('BALANCED_RESAMPLING', False):
             self.infos = self.balanced_infos_resampling(self.infos)
 
@@ -88,6 +90,62 @@ class NuScenesDataset(DatasetTemplate):
         self.logger.info('Loaded night/rain context for %d samples', len(sample_context))
         return sample_context
     
+    @staticmethod
+    def _parse_context_subset(context_subset):
+        if context_subset is None:
+            return None
+        subset = str(context_subset).strip().lower().replace('+', '_').replace('-', '_').replace(' ', '_')
+        alias = {
+            'all': 'all',
+            'none': 'all',
+            'night': 'night',
+            'rain': 'rain',
+            'night_rain': 'night_rain',
+            'rain_night': 'night_rain',
+            'no_night_no_rain': 'clear',
+            'no_rain_no_night': 'clear',
+            'clear': 'clear',
+            'dry_day': 'clear'
+        }
+        return alias.get(subset, subset)
+
+    def _context_subset_mask(self, context, subset_name):
+        night = int(context[0] > 0.5)
+        rain = int(context[1] > 0.5)
+        if subset_name == 'all':
+            return True
+        if subset_name == 'night':
+            return night == 1
+        if subset_name == 'rain':
+            return rain == 1
+        if subset_name == 'night_rain':
+            return (night == 1) and (rain == 1)
+        if subset_name == 'clear':
+            return (night == 0) and (rain == 0)
+        raise ValueError(f'Unknown context subset: {subset_name}')
+
+    def _filter_infos_by_context_subset(self):
+        if self.sample_context_map is None:
+            return
+
+        context_subset = None
+        if self.context_cfg is not None:
+            context_subset = self._parse_context_subset(self.context_cfg.get('EVAL_SUBSET', None))
+
+        if context_subset is None or context_subset == 'all':
+            return
+
+        filtered_infos = []
+        for info in self.infos:
+            context = self.sample_context_map.get(info['token'], np.zeros((2,), dtype=np.float32))
+            if self._context_subset_mask(context, context_subset):
+                filtered_infos.append(info)
+
+        self.logger.info(
+            'Apply context subset filter: %s, samples %d -> %d',
+            context_subset, len(self.infos), len(filtered_infos)
+        )
+        self.infos = filtered_infos
     def include_nuscenes_data(self, mode):
         self.logger.info('Loading NuScenes dataset')
         nuscenes_infos = []
