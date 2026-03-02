@@ -33,7 +33,8 @@ def parse_config():
     parser.add_argument('--sync_bn', action='store_true', default=False, help='whether to use sync bn')
     parser.add_argument('--fix_random_seed', action='store_true', default=False, help='')
     parser.add_argument('--ckpt_save_interval', type=int, default=1, help='number of training epochs')
-    parser.add_argument('--local_rank', type=int, default=0, help='local rank for distributed training')
+    parser.add_argument('--local_rank', '--local-rank', dest='local_rank', type=int, default=0,
+                        help='local rank for distributed training')
     parser.add_argument('--max_ckpt_save_num', type=int, default=30, help='max number of saved checkpoint')
     parser.add_argument('--merge_all_iters_to_one_epoch', action='store_true', default=False, help='')
     parser.add_argument('--set', dest='set_cfgs', default=None, nargs=argparse.REMAINDER,
@@ -159,7 +160,7 @@ def main():
         freeze_all_except_keyword(model, args.context_trainable_keyword, logger)
 
     optimizer = build_optimizer(model, cfg.OPTIMIZATION)
-    
+
     if args.ckpt is not None:
         it, start_epoch = model.load_params_with_optimizer(args.ckpt, to_cpu=dist_train, optimizer=optimizer, logger=logger)
         last_epoch = start_epoch + 1

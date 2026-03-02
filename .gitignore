@@ -7,3 +7,7 @@ output/
 pcdet.egg-info/
 **/*.so
 /data/nuscenes/*
+1e-4_output/
+1e-6_output/
+default/
+finetune_context_only_output/
